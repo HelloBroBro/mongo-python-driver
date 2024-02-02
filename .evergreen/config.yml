@@ -369,24 +369,21 @@ functions:
       params:
         working_dir: "src"
         shell: bash
-        background: true
+        include_expansions_in_env: ["test_encryption", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]
         script: |
           ${PREPARE_SHELL}
           if [ -n "${test_encryption}" ]; then
-            bash ./.evergreen/start-kmip-server.sh
+            . .evergreen/tox.sh -m setup-encryption
           fi
     - command: shell.exec
       type: test
       params:
         working_dir: "src"
         shell: bash
-        include_expansions_in_env: ["test_encryption", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]
         script: |
           # Disable xtrace
           set +x
           ${PREPARE_SHELL}
-          # Fetch vault secrets if needed
-          bash .evergreen/fetch-aws-vault-secrets.sh
           if [ -n "${MONGODB_STARTED}" ]; then
             export PYMONGO_MUST_CONNECT=true
           fi
@@ -396,9 +393,7 @@ functions:
           if [ -n "${test_encryption}" ]; then
             # Disable xtrace (just in case it was accidentally set).
             set +x
-            export LIBMONGOCRYPT_URL="${libmongocrypt_url}"
             export TEST_ENCRYPTION=1
-            . .evergreen/setup-encryption-variables.sh
             if [ -n "${test_encryption_pyopenssl}" ]; then
               export TEST_ENCRYPTION_PYOPENSSL=1
             fi
@@ -619,7 +614,7 @@ functions:
         working_dir: "src"
         script: |
           ${PREPARE_SHELL}
-          . .evergreen/stop-kmip-server.sh
+          . .evergreen/tox.sh -m teardown-encryption
           rm -rf $DRIVERS_TOOLS || true
           rm -f ./secrets-export.sh || true
 
@@ -1014,6 +1009,32 @@ task_groups:
     setup_group_timeout_secs: 1800
     tasks:
     - testazurekms-task
+
+  - name: testazureoidc_task_group
+    setup_group:
+      - func: fetch source
+      - func: prepare resources
+      - func: fix absolute paths
+      - func: make files executable
+      - command: shell.exec
+        params:
+          shell: bash
+          script: |-
+            set -o errexit
+            ${PREPARE_SHELL}
+            export AZUREOIDC_VMNAME_PREFIX="PYTHON_DRIVER"
+            $DRIVERS_TOOLS/.evergreen/auth_oidc/azure/create-and-setup-vm.sh
+    teardown_task:
+      - command: shell.exec
+        params:
+          shell: bash
+          script: |-
+            ${PREPARE_SHELL}
+            $DRIVERS_TOOLS/.evergreen/auth_oidc/azure/delete-vm.sh
+    setup_group_can_fail_task: true
+    setup_group_timeout_secs: 1800
+    tasks:
+      - oidc-auth-test-azure-latest
 
   - name: test_aws_lambda_task_group
     setup_group:
@@ -1983,6 +2004,22 @@ tasks:
         - func: "run load-balancer"
         - func: "run tests"
 
+    - name: "oidc-auth-test-azure-latest"
+      commands:
+      - command: shell.exec
+        params:
+          shell: bash
+          script: |-
+            set -o errexit
+            ${PREPARE_SHELL}
+            cd src
+            git add .
+            git commit -m "add files"
+            export AZUREOIDC_DRIVERS_TAR_FILE=/tmp/mongo-python-driver.tgz
+            git archive -o $AZUREOIDC_DRIVERS_TAR_FILE HEAD
+            export AZUREOIDC_TEST_CMD="source ./env.sh && export OIDC_PROVIDER_NAME=azure && ./.evergreen/run-mongodb-oidc-test.sh"
+            bash $DRIVERS_TOOLS/.evergreen/auth_oidc/azure/run-driver-test.sh
+
     - name: "test-fips-standalone"
       tags: ["fips"]
       commands:
@@ -2164,7 +2201,6 @@ axes:
           skip_EC2_auth_test: true
           skip_ECS_auth_test: true
           skip_web_identity_auth_test: true
-          libmongocrypt_url: https://s3.amazonaws.com/mciuploads/libmongocrypt/macos/master/latest/libmongocrypt.tar.gz
       - id: macos-1100
         display_name: "macOS 11.00"
         run_on: macos-1100
@@ -2172,7 +2208,6 @@ axes:
           skip_EC2_auth_test: true
           skip_ECS_auth_test: true
           skip_web_identity_auth_test: true
-          libmongocrypt_url: https://s3.amazonaws.com/mciuploads/libmongocrypt/macos/master/latest/libmongocrypt.tar.gz
       - id: macos-1100-arm64
         display_name: "macOS 11.00 Arm64"
         run_on: macos-1100-arm64
@@ -2180,25 +2215,18 @@ axes:
           skip_EC2_auth_test: true
           skip_ECS_auth_test: true
           skip_web_identity_auth_test: true
-          libmongocrypt_url: https://s3.amazonaws.com/mciuploads/libmongocrypt/macos/master/latest/libmongocrypt.tar.gz
       - id: rhel7
         display_name: "RHEL 7.x"
         run_on: rhel79-small
         batchtime: 10080  # 7 days
-        variables:
-          libmongocrypt_url: https://s3.amazonaws.com/mciuploads/libmongocrypt/rhel-70-64-bit/master/latest/libmongocrypt.tar.gz
       - id: rhel8
         display_name: "RHEL 8.x"
         run_on: rhel87-small
         batchtime: 10080  # 7 days
-        variables:
-          libmongocrypt_url: https://s3.amazonaws.com/mciuploads/libmongocrypt/rhel-80-64-bit/master/latest/libmongocrypt.tar.gz
       - id: rhel80-fips
         display_name: "RHEL 8.0 FIPS"
         run_on: rhel80-fips
         batchtime: 10080  # 7 days
-        variables:
-          libmongocrypt_url: https://s3.amazonaws.com/mciuploads/libmongocrypt/rhel-80-64-bit/master/latest/libmongocrypt.tar.gz
       - id: ubuntu-22.04
         display_name: "Ubuntu 22.04"
         run_on: ubuntu2204-small
@@ -2220,7 +2248,6 @@ axes:
         run_on: rhel82-arm64-small
         batchtime: 10080  # 7 days
         variables:
-          libmongocrypt_url: https://s3.amazonaws.com/mciuploads/libmongocrypt/rhel-82-arm64/master/latest/libmongocrypt.tar.gz
       - id: windows-64-vsMulti-small
         display_name: "Windows 64"
         run_on: windows-64-vsMulti-small
@@ -2230,7 +2257,6 @@ axes:
           skip_EC2_auth_test: true
           skip_web_identity_auth_test: true
           venv_bin_dir: "Scripts"
-          libmongocrypt_url: https://s3.amazonaws.com/mciuploads/libmongocrypt/windows-test/master/latest/libmongocrypt.tar.gz
 
   # Test with authentication?
   - id: auth
@@ -3051,6 +3077,13 @@ buildvariants:
   display_name: "MONGODB-OIDC Auth ${platform}"
   tasks:
     - name: "oidc-auth-test-latest"
+
+- name: testazureoidc-variant
+  display_name: "Azure OIDC"
+  run_on: ubuntu2004-small
+  tasks:
+    - name: testazureoidc_task_group
+      batchtime: 20160 # Use a batchtime of 14 days as suggested by the CSFLE test README
 
 - matrix_name: "aws-auth-test"
   matrix_spec:

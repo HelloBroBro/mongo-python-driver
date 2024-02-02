@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import enum
 import socket
+import uuid
 import weakref
 from copy import deepcopy
 from typing import (
@@ -30,6 +31,7 @@ from typing import (
     MutableMapping,
     Optional,
     Sequence,
+    Union,
     cast,
 )
 
@@ -101,7 +103,7 @@ def _wrap_encryption_errors() -> Iterator[None]:
         # we should propagate them unchanged.
         raise
     except Exception as exc:
-        raise EncryptionError(exc) from None
+        raise EncryptionError(exc) from exc
 
 
 class _EncryptionIO(MongoCryptCallback):  # type: ignore[misc]
@@ -520,6 +522,9 @@ class ClientEncryption(Generic[_DocumentType]):
                 data keys. This key should be generated and stored as securely
                 as possible.
 
+            KMS providers may be specified with an optional name suffix
+            separated by a colon, for example "kmip:name" or "aws:name".
+            Named KMS providers do not support :ref:`CSFLE on-demand credentials`.
         :param key_vault_namespace: The namespace for the key vault collection.
             The key vault collection contains all data keys used for encryption
             and decryption. Data keys are stored as documents in this MongoDB
@@ -674,12 +679,13 @@ class ClientEncryption(Generic[_DocumentType]):
         """Create and insert a new data key into the key vault collection.
 
         :param kms_provider: The KMS provider to use. Supported values are
-            "aws", "azure", "gcp", "kmip", and "local".
+            "aws", "azure", "gcp", "kmip", "local", or a named provider like
+            "kmip:name".
         :param master_key: Identifies a KMS-specific key used to encrypt the
             new data key. If the kmsProvider is "local" the `master_key` is
             not applicable and may be omitted.
 
-            If the `kms_provider` is "aws" it is required and has the
+            If the `kms_provider` type is "aws" it is required and has the
             following fields::
 
               - `region` (string): Required. The AWS region, e.g. "us-east-1".
@@ -689,7 +695,7 @@ class ClientEncryption(Generic[_DocumentType]):
                 requests to. May include port number, e.g.
                 "kms.us-east-1.amazonaws.com:443".
 
-            If the `kms_provider` is "azure" it is required and has the
+            If the `kms_provider` type is "azure" it is required and has the
             following fields::
 
               - `keyVaultEndpoint` (string): Required. Host with optional
@@ -697,7 +703,7 @@ class ClientEncryption(Generic[_DocumentType]):
               - `keyName` (string): Required. Key name in the key vault.
               - `keyVersion` (string): Optional. Version of the key to use.
 
-            If the `kms_provider` is "gcp" it is required and has the
+            If the `kms_provider` type is "gcp" it is required and has the
             following fields::
 
               - `projectId` (string): Required. The Google cloud project ID.
@@ -709,7 +715,7 @@ class ClientEncryption(Generic[_DocumentType]):
               - `endpoint` (string): Optional. Host with optional port.
                 Defaults to "cloudkms.googleapis.com".
 
-            If the `kms_provider` is "kmip" it is optional and has the
+            If the `kms_provider` type is "kmip" it is optional and has the
             following fields::
 
               - `keyId` (string): Optional. `keyId` is the KMIP Unique
@@ -755,7 +761,7 @@ class ClientEncryption(Generic[_DocumentType]):
         self,
         value: Any,
         algorithm: str,
-        key_id: Optional[Binary] = None,
+        key_id: Optional[Union[Binary, uuid.UUID]] = None,
         key_alt_name: Optional[str] = None,
         query_type: Optional[str] = None,
         contention_factor: Optional[int] = None,
@@ -763,6 +769,8 @@ class ClientEncryption(Generic[_DocumentType]):
         is_expression: bool = False,
     ) -> Any:
         self._check_closed()
+        if isinstance(key_id, uuid.UUID):
+            key_id = Binary.from_uuid(key_id)
         if key_id is not None and not (
             isinstance(key_id, Binary) and key_id.subtype == UUID_SUBTYPE
         ):
@@ -795,7 +803,7 @@ class ClientEncryption(Generic[_DocumentType]):
         self,
         value: Any,
         algorithm: str,
-        key_id: Optional[Binary] = None,
+        key_id: Optional[Union[Binary, uuid.UUID]] = None,
         key_alt_name: Optional[str] = None,
         query_type: Optional[str] = None,
         contention_factor: Optional[int] = None,
@@ -822,6 +830,9 @@ class ClientEncryption(Generic[_DocumentType]):
 
         :return: The encrypted value, a :class:`~bson.binary.Binary` with subtype 6.
 
+        .. versionchanged:: 4.7
+            ``key_id`` can now be passed in as a :class:`uuid.UUID`.
+
         .. versionchanged:: 4.2
            Added the `query_type` and `contention_factor` parameters.
         """
@@ -843,7 +854,7 @@ class ClientEncryption(Generic[_DocumentType]):
         self,
         expression: Mapping[str, Any],
         algorithm: str,
-        key_id: Optional[Binary] = None,
+        key_id: Optional[Union[Binary, uuid.UUID]] = None,
         key_alt_name: Optional[str] = None,
         query_type: Optional[str] = None,
         contention_factor: Optional[int] = None,
@@ -870,6 +881,9 @@ class ClientEncryption(Generic[_DocumentType]):
         :param range_opts: Experimental only, not intended for public use.
 
         :return: The encrypted expression, a :class:`~bson.RawBSONDocument`.
+
+        .. versionchanged:: 4.7
+            ``key_id`` can now be passed in as a :class:`uuid.UUID`.
 
         .. versionadded:: 4.4
         """
