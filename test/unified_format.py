@@ -495,6 +495,10 @@ class EntityMapUtil:
                     kwargs["h"] = client_context.mongos_seeds()
             kwargs.update(spec.get("uriOptions", {}))
             server_api = spec.get("serverApi")
+            if "waitQueueSize" in kwargs:
+                raise unittest.SkipTest("PyMongo does not support waitQueueSize")
+            if "waitQueueMultiple" in kwargs:
+                raise unittest.SkipTest("PyMongo does not support waitQueueMultiple")
             if server_api:
                 kwargs["server_api"] = ServerApi(
                     server_api["version"],
@@ -1048,6 +1052,10 @@ class UnifiedSpecTestMixinV1(IntegrationTest):
             self.skipTest("PyMongo's open_download_stream does not cap the stream's lifetime")
 
         if "unpin after TransientTransactionError error on" in spec["description"]:
+            self.skipTest("Skipping TransientTransactionError pending PYTHON-4227")
+        if "withTransaction commits after callback returns" in spec["description"]:
+            self.skipTest("Skipping TransientTransactionError pending PYTHON-4303")
+        if "unpin on successful abort" in spec["description"]:
             self.skipTest("Skipping TransientTransactionError pending PYTHON-4227")
 
         if "unpin after non-transient error on abort" in spec["description"]:
@@ -1766,6 +1774,8 @@ class UnifiedSpecTestMixinV1(IntegrationTest):
         def format_logs(log_list):
             client_to_log = defaultdict(list)
             for log in log_list:
+                if log.module == "ocsp_support":
+                    continue
                 data = json_util.loads(log.message)
                 client = data.pop("clientId")
                 client_to_log[client].append(
