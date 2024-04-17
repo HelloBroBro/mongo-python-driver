@@ -55,8 +55,7 @@ from typing import (
     cast,
 )
 
-import bson
-from bson.codec_options import DEFAULT_CODEC_OPTIONS, TypeRegistry
+from bson.codec_options import DEFAULT_CODEC_OPTIONS, CodecOptions, TypeRegistry
 from bson.timestamp import Timestamp
 from pymongo import (
     _csot,
@@ -439,8 +438,8 @@ class MongoClient(common.BaseObject, Generic[_DocumentType]):
             primary (e.g. w=3 means write to the primary and wait until
             replicated to **two** secondaries). Passing w=0 **disables write
             acknowledgement** and all other write concern options.
-          - `wTimeoutMS`: (integer) Used in conjunction with `w`. Specify a value
-            in milliseconds to control how long to wait for write propagation
+          - `wTimeoutMS`: **DEPRECATED** (integer) Used in conjunction with `w`.
+            Specify a value in milliseconds to control how long to wait for write propagation
             to complete. If replication does not complete in the given
             timeframe, a timeout exception is raised. Passing wTimeoutMS=0
             will cause **write operations to wait indefinitely**.
@@ -717,6 +716,9 @@ class MongoClient(common.BaseObject, Generic[_DocumentType]):
            Not::
 
                client.__my_database__
+
+        .. versionchanged:: 4.7
+            Deprecated parameter ``wTimeoutMS``, use :meth:`~pymongo.timeout`.
         """
         doc_class = document_class or dict
         self.__init_kwargs: dict[str, Any] = {
@@ -877,8 +879,11 @@ class MongoClient(common.BaseObject, Generic[_DocumentType]):
             # This will be used later if we fork.
             MongoClient._clients[self._topology._topology_id] = self
 
-    def _init_background(self) -> None:
+    def _init_background(self, old_pid: Optional[int] = None) -> None:
         self._topology = Topology(self._topology_settings)
+        # Seed the topology with the old one's pid so we can detect clients
+        # that are opened before a fork and used after.
+        self._topology._pid = old_pid
 
         def target() -> bool:
             client = self_ref()
@@ -901,7 +906,7 @@ class MongoClient(common.BaseObject, Generic[_DocumentType]):
 
     def _after_fork(self) -> None:
         """Resets topology in a child after successfully forking."""
-        self._init_background()
+        self._init_background(self._topology._pid)
 
     def _duplicate(self, **kwargs: Any) -> MongoClient:
         args = self.__init_kwargs.copy()
@@ -919,7 +924,7 @@ class MongoClient(common.BaseObject, Generic[_DocumentType]):
         the server may change. In such cases, store a local reference to a
         ServerDescription first, then use its properties.
         """
-        server = self._topology.select_server(writable_server_selector, _Op.TEST)
+        server = self._get_topology().select_server(writable_server_selector, _Op.TEST)
 
         return getattr(server.description, attr_name)
 
@@ -2029,7 +2034,7 @@ class MongoClient(common.BaseObject, Generic[_DocumentType]):
     def get_default_database(
         self,
         default: Optional[str] = None,
-        codec_options: Optional[bson.CodecOptions[_DocumentTypeArg]] = None,
+        codec_options: Optional[CodecOptions[_DocumentTypeArg]] = None,
         read_preference: Optional[_ServerMode] = None,
         write_concern: Optional[WriteConcern] = None,
         read_concern: Optional[ReadConcern] = None,
@@ -2089,7 +2094,7 @@ class MongoClient(common.BaseObject, Generic[_DocumentType]):
     def get_database(
         self,
         name: Optional[str] = None,
-        codec_options: Optional[bson.CodecOptions[_DocumentTypeArg]] = None,
+        codec_options: Optional[CodecOptions[_DocumentTypeArg]] = None,
         read_preference: Optional[_ServerMode] = None,
         write_concern: Optional[WriteConcern] = None,
         read_concern: Optional[ReadConcern] = None,
